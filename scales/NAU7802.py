@@ -1,7 +1,6 @@
 import smbus2
 import time
 
-# Register Map
 Scale_Registers = {'NAU7802_PU_CTRL': 0x00,
                    'NAU7802_CTRL1': 1,
                    'NAU7802_CTRL2': 2,
@@ -23,9 +22,9 @@ Scale_Registers = {'NAU7802_PU_CTRL': 0x00,
                    'NAU7802_ADCO_B2': 18,
                    'NAU7802_ADCO_B1': 19,
                    'NAU7802_ADCO_B0': 20,
-                   'NAU7802_ADC': 0x15,           # Shared ADC and OTP 32:24
-                   'NAU7802_OTP_B1': 22,          # OTP 23:16 or 7:0?
-                   'NAU7802_OTP_B0': 23,          # OTP 15:8
+                   'NAU7802_ADC': 0x15,
+                   'NAU7802_OTP_B1': 22,
+                   'NAU7802_OTP_B0': 23,
                    'NAU7802_PGA': 0x1B,
                    'NAU7802_PGA_PWR': 0x1C,
                    'NAU7802_DEVICE_REV': 0x1F}
@@ -104,22 +103,20 @@ NAU7802_Cal_Status = {'NAU7802_CAL_SUCCESS': 0,
                       'NAU7802_CAL_FAILURE': 2}
 
 class NAU7802():
-    # Default constructor
     def __init__(self, i2cPort = 1, deviceAddress = 0x2A, zeroOffset = False,
                  calibrationFactor = False):
-        self.bus = smbus2.SMBus(i2cPort)    # This stores the user's requested i2c port
-        self.deviceAddress = deviceAddress    # Default unshifted 7-bit address of the NAU7802
+        self.bus = smbus2.SMBus(i2cPort)
+        self.deviceAddress = deviceAddress
 
-        # y = mx + b
-        self.zeroOffset = zeroOffset    # This is b
-        self.calibrationFactor = calibrationFactor    # This is m. User provides this number so that we can output y when requested
+        self.zeroOffset = zeroOffset
+        self.calibrationFactor = calibrationFactor
 
-    # Returns true if Cycle Ready bit is set (conversion is complete)
-    def available(self):    # Returns true if Cycle Ready bit is set (conversion is complete)
+    # Returns true if conversion complete
+    def available(self):
         return self.getBit(PU_CTRL_Bits['NAU7802_PU_CTRL_CR'], Scale_Registers['NAU7802_PU_CTRL'])
 
     # Check calibration status.
-    def calAFEStatus(self):    # Check calibration status.
+    def calAFEStatus(self):
         if self.getBit(CTRL2_Bits['NAU7802_CTRL2_CALS'], Scale_Registers['NAU7802_CTRL2']):
             return NAU7802_Cal_Status['NAU7802_CAL_IN_PROGRESS']
 
@@ -136,7 +133,7 @@ class NAU7802():
     # Calibrate analog front end of system. Returns true if CAL_ERR bit is 0 (no error)
     # Takes approximately 344ms to calibrate; wait up to 1000ms.
     # It is recommended that the AFE be re-calibrated any time the gain, SPS, or channel number is changed.
-    def calibrateAFE(self):    # Synchronous calibration of the analog front end of the NAU7802. Returns true if CAL_ERR bit is 0 (no error)
+    def calibrateAFE(self): 
         self.beginCalibrateAFE()
         return self.waitForCalibrateAFE(1)
 
@@ -168,24 +165,24 @@ class NAU7802():
 
     # Begin asynchronous calibration of the analog front end.
     # Poll for completion with calAFEStatus() or wait with waitForCalibrateAFE()
-    def beginCalibrateAFE(self):    # Begin asynchronous calibration of the analog front end of the NAU7802. Poll for completion with calAFEStatus() or wait with waitForCalibrateAFE().
+    def beginCalibrateAFE(self):   
         self.setBit(CTRL2_Bits['NAU7802_CTRL2_CALS'], Scale_Registers['NAU7802_CTRL2'])
 
     # Call after zeroing. Provide the float weight sitting on scale. Units do not matter.
-    def calculateCalibrationFactor(self, weightOnScale, averageAmount):    # Call this with the value of the thing on the scale. Sets the calibration factor based on the weight on scale and zero offset.
+    def calculateCalibrationFactor(self, weightOnScale, averageAmount):   
         onScale = self.getAverage(averageAmount)
         newCalFactor = (onScale - self.zeroOffset) / weightOnScale
         self.setCalibrationFactor(newCalFactor)
 
     # Mask & clear a given bit within a register
-    def clearBit(self, bitNumber, registerAddress):    # Mask & clear a given bit within a register
+    def clearBit(self, bitNumber, registerAddress):
         value = self.getRegister(registerAddress)
         value &= ~(1 << bitNumber)    # Set this bit
         return self.setRegister(registerAddress, value)
 
     # Return the average of a given number of readings
     # Gives up after 1000ms so don't call this function to average 8 samples setup at 1Hz output (requires 8s)
-    def getAverage(self, averageAmount):    # Return the average of a given number of readings
+    def getAverage(self, averageAmount):  
         total = 0
         samplesAcquired = 0
 
@@ -205,7 +202,7 @@ class NAU7802():
         return total
 
     # Return a given bit within a register
-    def getBit(self, bitNumber, registerAddress):    # Return a given bit within a register
+    def getBit(self, bitNumber, registerAddress):
         value = self.getRegister(registerAddress)
         value &= (1 << bitNumber)    # Clear all but this bit
         return value
@@ -215,45 +212,28 @@ class NAU7802():
 
     # Returns 24-bit reading
     # Assumes CR Cycle Ready bit (ADC conversion complete) has been checked to be 1
-    def getReading(self):    # Returns 24-bit reading. Assumes CR Cycle Ready bit (ADC conversion complete) has been checked by .available()
+    def getReading(self): 
         try:
             block = self.bus.read_i2c_block_data(self.deviceAddress, Scale_Registers['NAU7802_ADCO_B2'], 3)
-            # print("RAW Block = " + str(block))
-            # valueRaw = block[0] << 16    # MSB
-            # valueRaw |= block[1] << 8    #MidSB
-            # valueRaw |= block[2]    # LSB
-            # print("RAW Value = " + str(valueRaw))
-
-            # # the raw value coming from the ADC is a 24-bit number, so the sign bit now
-            # # resides on bit 23 (0 is LSB) of the container. By shifting the
-            # # value to the left, I move the sign bit to the MSB of the container.
-            # # By casting to a signed container I now have properly recovered
-            # # the sign of the original value
-            # valueShifted = valueRaw << 8
-            # print("Value shifted = " + str(valueShifted))
-
-            # # shift the number back right to recover its intended magnitude
-            # value = valueShifted >> 8
-
-            # return (value)
             return int.from_bytes(block, "big", signed=True)
         except:
             return False
 
     # Get contents of a register
-    def getRegister(self, registerAddress):    # Get contents of a register
+    def getRegister(self, registerAddress):
         try:
             return self.bus.read_i2c_block_data(self.deviceAddress, registerAddress, 1)[0]
         except:
             return False    # Error
 
     # Get the revision code of this IC
-    def getRevisionCode(self):    # Get the revision code of this IC. Always 0x0F.
+    def getRevisionCode(self): 
         revisionCode = self.getRegister(Scale_Registers['NAU7802_DEVICE_REV'])
         return revisionCode & 0x0F
 
     # Returns the y of y = mx + b using the current weight on scale, the cal factor, and the offset.
-    def getWeight(self, allowNegativeWeights = False, samplesToTake = 10):    # Once you've set zero offset and cal factor, you can ask the library to do the calculations for you.
+    # Once you've set zero offset and cal factor, you can ask the library to do the calculations for you.
+    def getWeight(self, allowNegativeWeights = False, samplesToTake = 10):    
         onScale = self.getAverage(samplesToTake)
 
         # Prevent the current reading from being less than zero offset
@@ -270,12 +250,13 @@ class NAU7802():
             print('Needs calibrating')
             return False
 
-    def getZeroOffset(self):    # Ask library for this value. Useful for storing value into NVM.
+    # Ask library for this value. Useful for storing value into NVM.
+    def getZeroOffset(self):
         return self.zeroOffset
 
     # Returns true if device is present
     # Tests for device ack to I2C address
-    def isConnected(self):    # Returns true if device acks at the I2C address
+    def isConnected(self):
         try:
             self.bus.read_byte(self.deviceAddress)
             return True
@@ -283,12 +264,12 @@ class NAU7802():
             return False
 
     # Puts scale into low-power mode
-    def powerDown(self):    # Puts scale into low-power 200nA mode
+    def powerDown(self):
         self.clearBit(PU_CTRL_Bits['NAU7802_PU_CTRL_PUD'], Scale_Registers['NAU7802_PU_CTRL'])
         return self.clearBit(PU_CTRL_Bits['NAU7802_PU_CTRL_PUA'], Scale_Registers['NAU7802_PU_CTRL'])
 
     # Power up digital and analog sections of scale
-    def powerUp(self):    # Power up digital and analog sections of scale, ~2mA
+    def powerUp(self):
         self.setBit(PU_CTRL_Bits['NAU7802_PU_CTRL_PUD'], Scale_Registers['NAU7802_PU_CTRL'])
         self.setBit(PU_CTRL_Bits['NAU7802_PU_CTRL_PUA'], Scale_Registers['NAU7802_PU_CTRL'])
 
@@ -304,24 +285,24 @@ class NAU7802():
         return True
 
     # Resets all registers to Power Of Defaults
-    def reset(self):    # Resets all registers to Power Of Defaults
+    def reset(self):  
         self.setBit(PU_CTRL_Bits['NAU7802_PU_CTRL_RR'], Scale_Registers['NAU7802_PU_CTRL']) # Set RR
         time.sleep(0.001)
         return self.clearBit(PU_CTRL_Bits['NAU7802_PU_CTRL_RR'], Scale_Registers['NAU7802_PU_CTRL']) # Clear RR to leave reset state
 
     # Mask & set a given bit within a register
-    def setBit(self, bitNumber, registerAddress):    # Mask & set a given bit within a register
+    def setBit(self, bitNumber, registerAddress):   
         value = self.getRegister(registerAddress)
         value |= (1 << bitNumber)    # Set this bit
         return self.setRegister(registerAddress, value)
 
     # Pass a known calibration factor into library. Helpful if users is loading settings from NVM.
     # If you don't know your cal factor, call setZeroOffset(), then calculateCalibrationFactor() with a known weight
-    def setCalibrationFactor(self, newCalFactor):    # Pass a known calibration factor into library. Helpful if users is loading settings from NVM.
+    def setCalibrationFactor(self, newCalFactor):  
         self.calibrationFactor = newCalFactor
 
     # Select between 1 and 2
-    def setChannel(self, channelNumber):    # Select between 1 and 2
+    def setChannel(self, channelNumber):
         if channelNumber == NAU7802_Channels['NAU7802_CHANNEL_1']:
             return self.clearBit(CTRL2_Bits['NAU7802_CTRL2_CHS'], Scale_Registers['NAU7802_CTRL2'])    # Channel 1 (default)
         else:
@@ -329,7 +310,7 @@ class NAU7802():
 
     # Set the gain
     # x1, 2, 4, 8, 16, 32, 64, 128 are avaialable
-    def setGain(self, gainValue):    # Set the gain. x1, 2, 4, 8, 16, 32, 64, 128 are available
+    def setGain(self, gainValue): 
         if gainValue > 0b111:
             gainValue = 0b111    # Error check
 
@@ -363,7 +344,7 @@ class NAU7802():
 
     # Send a given value to be written to given address
     # Return true if successful
-    def setRegister(self, registerAddress, value):    # Send a given value to be written to given address. Return true if successful
+    def setRegister(self, registerAddress, value): 
         try:
             self.bus.write_word_data(self.deviceAddress, registerAddress, value)
         except:
@@ -372,7 +353,7 @@ class NAU7802():
 
     # Set the readings per second
     # 10, 20, 40, 80, and 320 samples per second is available
-    def setSampleRate(self, rate):    # Set the readings per second. 10, 20, 40, 80, and 320 samples per second is available
+    def setSampleRate(self, rate):  
         if rate > 0b111:
             rate = 0b111    # Error check
 
@@ -384,12 +365,12 @@ class NAU7802():
 
     # Sets the internal variable. Useful for users who are loading values from NVM.
     def setZeroOffset(self, newZeroOffset):
-        self.zeroOffset = newZeroOffset    # Sets the internal variable. Useful for users who are loading values from NVM.
+        self.zeroOffset = newZeroOffset 
 
     # Wait for asynchronous AFE calibration to complete with optional timeout.
     # If timeout is not specified (or set to 0), then wait indefinitely.
     # Returns true if calibration completes succsfully, otherwise returns false.
-    def waitForCalibrateAFE(self, timeout = 0):    # Wait for asynchronous AFE calibration to complete with optional timeout.
+    def waitForCalibrateAFE(self, timeout = 0): 
         begin = time.time()
         cal_ready = 0
 
